@@ -1,8 +1,8 @@
 {
-  "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "vefr-install",
-  "compatibility_date": "2026-07-19",
-  "assets": {
-    "directory": "./dist"
-  }
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "vefr",
+	"compatibility_date": "2026-07-19",
+	"assets": {
+		"directory": "./dist"
+	}
 }
