@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"encoding/base64"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"testing"
 
 	"vefr/internal/config"
@@ -30,5 +32,23 @@ func TestTargetPortAllowList(t *testing.T) {
 	s := NewServer(config.Config{AllowPorts: []int{80}, BlockPrivate: &secure}, p, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err := s.validateTarget("example.com:22"); err == nil {
 		t.Fatal("expected disallowed port")
+	}
+}
+
+func TestProxyBasicAuth(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "http://example.com", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("user:pass")))
+	user, pass, ok := proxyBasicAuth(req)
+	if !ok || user != "user" || pass != "pass" {
+		t.Fatalf("proxyBasicAuth() = %q, %q, %v", user, pass, ok)
+	}
+
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("wrong:header")))
+	user, pass, ok = proxyBasicAuth(req)
+	if !ok || user != "user" || pass != "pass" {
+		t.Fatalf("proxyBasicAuth() should ignore Authorization header, got %q, %q, %v", user, pass, ok)
 	}
 }

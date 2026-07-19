@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -70,11 +71,25 @@ func (s *Server) authorized(r *http.Request) bool {
 	if s.cfg.Username == "" && s.cfg.Password == "" {
 		return false
 	}
-	user, pass, ok := r.BasicAuth()
+	user, pass, ok := proxyBasicAuth(r)
 	if !ok {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(user), []byte(s.cfg.Username)) == 1 && subtle.ConstantTimeCompare([]byte(pass), []byte(s.cfg.Password)) == 1
+}
+
+func proxyBasicAuth(r *http.Request) (username, password string, ok bool) {
+	value := r.Header.Get("Proxy-Authorization")
+	scheme, encoded, found := strings.Cut(value, " ")
+	if !found || !strings.EqualFold(scheme, "Basic") {
+		return "", "", false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
+	if err != nil {
+		return "", "", false
+	}
+	username, password, found = strings.Cut(string(decoded), ":")
+	return username, password, found
 }
 
 func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
