@@ -5,13 +5,13 @@
 Run this command on a Linux host with `curl`, `tar`, `sudo`, and `systemd`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/project-cvsa/vefr/main/scripts/install.sh | bash
+curl -fsSL https://vefr.projectcvsa.com/install.sh | bash
 ```
 
 To install a specific release or use a different configuration path:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/project-cvsa/vefr/main/scripts/install.sh \
+curl -fsSL https://vefr.projectcvsa.com/install.sh \
   | bash -s -- --version v0.1.0 --config /etc/vefr/config.toml
 ```
 
