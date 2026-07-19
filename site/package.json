@@ -1,0 +1,12 @@
+{
+	"name": "vefr-site",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "node build.mjs",
+		"deploy": "npm run build && wrangler deploy"
+	},
+	"devDependencies": {
+		"wrangler": "^4.102.0"
+	}
+}
