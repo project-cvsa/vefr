@@ -1,0 +1,19 @@
+listen = "127.0.0.1:8080"
+username = "proxy-user"
+password = "change-me"
+source_ips = [
+  "2001:db8::10",
+  "2001:db8::11",
+]
+source_cidrs = [
+  "2001:db8:1234::/64",
+]
+rotation = "random"
+allow_ports = [80, 443]
+block_private = true
+
+[timeouts]
+connect = "15s"
+read_header = "10s"
+idle = "90s"
+request = "60s"

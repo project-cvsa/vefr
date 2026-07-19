@@ -1,0 +1,7 @@
+.git
+.github
+bin
+config.toml
+*.log
+docs
+deploy

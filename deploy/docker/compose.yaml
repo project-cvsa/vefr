@@ -1,0 +1,16 @@
+services:
+  vefr:
+    build:
+      context: ../..
+    image: vefr:local
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    volumes:
+      - ./config.toml:/etc/vefr/config.toml:ro

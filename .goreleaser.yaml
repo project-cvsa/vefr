@@ -1,0 +1,26 @@
+version: 2
+
+project_name: vefr
+
+builds:
+  - id: vefr
+    main: ./cmd/proxy
+    binary: vefr
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats: [tar.gz]
+    files:
+      - README.md
+      - config.example.toml
+      - docs/**
+      - deploy/**
+
+checksum:
+  name_template: checksums.txt

@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting
+        run: make fmt-check
+
+      - name: Run vet
+        run: make vet
+
+      - name: Run tests
+        run: make test
+
+      - name: Run race detector
+        run: make race
+
+      - name: Build
+        run: make build
+
+      - name: Build container
+        run: docker build --tag vefr:ci .
