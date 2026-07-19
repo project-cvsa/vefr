@@ -1,91 +1,107 @@
 # Vefr
 
-![vefr](.github/banner.png)
+## Installation
 
-**Vefr** helps you convert IPv6 addresses assigned to your host into a single HTTP proxy.
-
-## Install
-
-The one-line installer supports Linux `x86_64` and `arm64`. It downloads the
-matching GitHub Release archive, verifies its SHA-256 checksum, installs the
-binary, preserves an existing configuration, and asks the binary to register
-its own systemd unit.
+Run this command on a Linux host with `curl`, `tar`, `sudo`, and `systemd`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/project-cvsa/vefr/main/scripts/install.sh | bash
 ```
 
-On a new host, the command installs the example configuration but leaves the
-service stopped until it is configured. Edit the configuration, then validate
-and start the service:
+To install a specific release or use a different configuration path:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/project-cvsa/vefr/main/scripts/install.sh \
+  | bash -s -- --version v0.1.0 --config /etc/vefr/config.toml
+```
+
+## Configure
+
+Open the configuration file:
 
 ```sh
 sudoedit /etc/vefr/config.toml
-sudo /usr/local/bin/vefr check --config /etc/vefr/config.toml
-sudo systemctl enable --now vefr
 ```
 
-Set proxy credentials and configure `source_ips` or `source_cidrs` with IPv6
-addresses routed to the host. Verify one of those addresses before installing:
+Set proxy credentials and at least one usable IPv6 source address or CIDR. The
+addresses in `config.example.toml` are documentation addresses; replace them
+with addresses routed to this host.
+
+Validate the configuration:
+
+```sh
+sudo /usr/local/bin/vefr check --config /etc/vefr/config.toml
+```
+
+Before starting Vefr, verify that the host can send traffic from one of the
+configured addresses:
 
 ```sh
 curl --interface 2001:db8:1234::10 https://example.com/
 ```
 
-Replace the documentation address with a real one. The example configuration
-is in [config.example.toml](config.example.toml).
+Replace the example address with a real address. If this check fails, configure
+the IPv6 route, provider announcement, firewall, and reverse-path filtering
+first. See [docs/linux-anyip.md](docs/linux-anyip.md).
 
-Pin a release or install an existing configuration during the same operation:
+## Start and stop the service
+
+Start the service at boot and start it now:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/project-cvsa/vefr/main/scripts/install.sh \
-  | bash -s -- --version v1.2.3 --config ./config.toml
+sudo systemctl enable --now vefr
 ```
 
-The installer does not configure IPv6 routes, provider announcements,
-firewalls, or reverse-path filtering. See [docs/linux-anyip.md](docs/linux-anyip.md)
-if the source-address check fails.
-
-## CLI
-
-After installation, the same binary can be run directly or managed by
-systemd:
+Check its status and logs:
 
 ```sh
-vefr version
-vefr check --config /etc/vefr/config.toml
-vefr run --config /etc/vefr/config.toml
-
-sudo vefr systemd install --config /etc/vefr/config.toml
-
 sudo systemctl status vefr
+sudo journalctl -u vefr -f
+```
+
+Restart or stop it:
+
+```sh
 sudo systemctl restart vefr
+sudo systemctl stop vefr
 ```
 
-Running `vefr` without a subcommand starts the proxy. The legacy forms
-`vefr -config ...` and `vefr -check -config ...` remain supported. The
-`systemd install` command requires root and only installs/enables the unit; it
-does not start the service unless `systemctl enable --now` is run separately.
+The service listens on `127.0.0.1:8080` by default. Test it with:
 
-## Authentication
-
-`username` and `password` are proxy-client credentials, not the Linux
-`vefr` service account. Authentication is enabled by default to prevent an
-accidental open proxy.
-
-For a proxy bound only to localhost or an otherwise trusted, isolated network,
-authentication can be disabled explicitly:
-
-```toml
-auth_enabled = false
+```sh
+curl -x http://proxy-user:change-me@127.0.0.1:8080 https://example.com/ -I
+curl http://127.0.0.1:8080/healthz
 ```
 
-Do not disable it on a shared or internet-facing listener. The systemd service
-account remains enabled either way so the process does not run as root.
+## Command line
+
+Run Vefr directly:
+
+```sh
+vefr run --config /etc/vefr/config.toml
+vefr check --config /etc/vefr/config.toml
+vefr version
+vefr --help
+```
+
+Install or update the systemd unit manually:
+
+```sh
+sudo vefr systemd install --config /etc/vefr/config.toml
+```
+
+The legacy forms `vefr -config PATH` and `vefr -check -config PATH` are still
+accepted.
+
+## Configuration safety
+
+Keep authentication enabled for any listener reachable by other machines. Do
+not set `block_private = false` on a shared or internet-facing host. Treat the
+configuration file as a secret because it contains proxy credentials.
 
 ## Development
 
-Requires Go 1.22+.
+Install Go 1.22 or newer, then run:
 
 ```sh
 make check
@@ -93,8 +109,8 @@ make build
 make race
 ```
 
-See [docs/linux-anyip.md](docs/linux-anyip.md) for IPv6 setup and
-[docs/operations.md](docs/operations.md) for operations.
+See [docs/operations.md](docs/operations.md) for operational checks and
+backup guidance.
 
 ## License
 

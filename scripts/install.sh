@@ -32,7 +32,7 @@ command -v tar >/dev/null || die "tar is required"
 if [[ $EUID -ne 0 ]]; then command -v sudo >/dev/null || die "sudo is required"; SUDO=sudo; fi
 
 if [[ "$VERSION" == latest ]]; then
-  VERSION="$(curl --fail --location --silent --show-error "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' | head -n 1)"
+  VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' | head -n 1)"
   [[ -n "$VERSION" ]] || die "failed to determine the latest release"
 fi
 BASE="https://github.com/$REPO/releases/download/$VERSION"
@@ -42,8 +42,8 @@ trap 'rm -rf "$TMPDIR"' EXIT
 ARCHIVE="$TMPDIR/vefr.tar.gz"
 CHECKSUMS="$TMPDIR/checksums.txt"
 info "Downloading vefr ($ARCH)..."
-curl --fail --location --progress-bar "$BASE/$ASSET" --output "$ARCHIVE" || die "failed to download $BASE/$ASSET"
-curl --fail --location --silent-show-error "$BASE/checksums.txt" --output "$CHECKSUMS" || die "failed to download checksums"
+curl -fL --progress-bar "$BASE/$ASSET" -o "$ARCHIVE" || die "failed to download $BASE/$ASSET"
+curl -fsSL "$BASE/checksums.txt" -o "$CHECKSUMS" || die "failed to download checksums"
 EXPECTED="$(grep "  $ASSET$" "$CHECKSUMS" | awk '{print $1}')"
 [[ -n "$EXPECTED" ]] || die "checksum entry not found for $ASSET"
 if command -v sha256sum >/dev/null; then ACTUAL="$(sha256sum "$ARCHIVE" | awk '{print $1}')"; else ACTUAL="$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')"; fi
