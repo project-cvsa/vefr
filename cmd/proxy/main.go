@@ -74,7 +74,13 @@ func runProxy(path string, checkOnly bool) error {
 		return nil
 	}
 	server := proxy.NewServer(cfg, pool, logger)
-	httpServer := &http.Server{Addr: cfg.Listen, Handler: server, ReadHeaderTimeout: cfg.Timeouts.ReadHeader, IdleTimeout: cfg.Timeouts.Idle}
+	httpServer := &http.Server{
+		Addr:              cfg.Listen,
+		Handler:           server,
+		ReadHeaderTimeout: cfg.Timeouts.ReadHeader,
+		IdleTimeout:       cfg.Timeouts.Idle,
+		MaxHeaderBytes:    32 << 10,
+	}
 	go func() {
 		logger.Info("proxy listening", "address", cfg.Listen, "sources", pool.Size(), "rotation", cfg.Rotation)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

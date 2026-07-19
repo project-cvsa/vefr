@@ -52,3 +52,18 @@ func TestProxyBasicAuth(t *testing.T) {
 		t.Fatalf("proxyBasicAuth() should ignore Authorization header, got %q, %q, %v", user, pass, ok)
 	}
 }
+
+func TestFailedSourceIsSkipped(t *testing.T) {
+	p, err := ippool.New([]string{"2001:db8::1", "2001:db8::2"}, nil, "round_robin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secure := false
+	s := NewServer(config.Config{BlockPrivate: &secure}, p, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	failed := net.ParseIP("2001:db8::1")
+	s.markSourceFailure(failed)
+	s.markSourceFailure(failed)
+	if got := s.nextSource(nil).String(); got != "2001:db8::2" {
+		t.Fatalf("nextSource() = %s, want failed source skipped", got)
+	}
+}

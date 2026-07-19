@@ -1,5 +1,7 @@
 # Vefr
 
+![vefr](.github/banner.png)
+
 ## Installation
 
 Run this command on a Linux host with `curl`, `tar`, `sudo`, and `systemd`:

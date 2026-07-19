@@ -12,9 +12,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/elazarl/goproxy"
 	"vefr/internal/config"
 	"vefr/internal/ippool"
 )
@@ -26,21 +28,96 @@ type Server struct {
 	requests  atomic.Uint64
 	active    atomic.Int64
 	transport *http.Transport
+	proxy     *goproxy.ProxyHttpServer
+	sourceMu  sync.Mutex
+	sources   map[string]sourceStatus
+}
+
+type sourceStatus struct {
+	failures       int
+	unhealthyUntil time.Time
+}
+
+type activityConn struct {
+	net.Conn
+	idle time.Duration
+}
+
+func (c *activityConn) Read(p []byte) (int, error) {
+	c.refreshReadDeadline()
+	return c.Conn.Read(p)
+}
+
+func (c *activityConn) Write(p []byte) (int, error) {
+	c.refreshWriteDeadline()
+	return c.Conn.Write(p)
+}
+
+func (c *activityConn) CloseRead() error {
+	if conn, ok := c.Conn.(interface{ CloseRead() error }); ok {
+		return conn.CloseRead()
+	}
+	return nil
+}
+
+func (c *activityConn) CloseWrite() error {
+	if conn, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return conn.CloseWrite()
+	}
+	return nil
+}
+
+func (c *activityConn) refreshReadDeadline() {
+	if c.idle > 0 {
+		deadline := time.Now().Add(c.idle)
+		_ = c.Conn.SetReadDeadline(deadline)
+		_ = c.Conn.SetWriteDeadline(deadline)
+	}
+}
+
+func (c *activityConn) refreshWriteDeadline() {
+	if c.idle > 0 {
+		deadline := time.Now().Add(c.idle)
+		_ = c.Conn.SetReadDeadline(deadline)
+		_ = c.Conn.SetWriteDeadline(deadline)
+	}
 }
 
 func NewServer(cfg config.Config, pool *ippool.Pool, logger *slog.Logger) *Server {
-	s := &Server{cfg: cfg, pool: pool, logger: logger}
+	s := &Server{cfg: cfg, pool: pool, logger: logger, sources: make(map[string]sourceStatus)}
 	s.transport = &http.Transport{
-		Proxy:             nil,
-		ForceAttemptHTTP2: false,
-		// A fresh upstream connection makes source-IP rotation effective per
-		// HTTP request. CONNECT tunnels are always dedicated connections.
-		DisableKeepAlives:     true,
+		Proxy:                 nil,
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          256,
+		MaxIdleConnsPerHost:   16,
+		MaxConnsPerHost:       64,
 		DialContext:           s.dialContext,
 		TLSHandshakeTimeout:   cfg.Timeouts.Connect,
 		ResponseHeaderTimeout: cfg.Timeouts.Request,
 		IdleConnTimeout:       cfg.Timeouts.Idle,
 	}
+	s.proxy = goproxy.NewProxyHttpServer()
+	s.proxy.Tr = s.transport
+	s.proxy.ConnectDialWithReq = func(req *http.Request, network, address string) (net.Conn, error) {
+		return s.dialContext(req.Context(), network, address)
+	}
+	s.proxy.ConnectionErrHandler = func(conn io.Writer, ctx *goproxy.ProxyCtx, err error) {
+		s.logger.Warn("upstream connection failed", "target", ctx.Req.Host, "error", err)
+		_, _ = io.WriteString(conn, "HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nupstream connection failed\r\n")
+	}
+	s.proxy.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+		if resp != nil {
+			return resp
+		}
+		s.logger.Warn("upstream request failed", "target", ctx.Req.URL.Host, "error", ctx.Error)
+		return &http.Response{
+			StatusCode: http.StatusBadGateway,
+			Status:     "502 Bad Gateway",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("upstream request failed\n")),
+			Request:    ctx.Req,
+		}
+	})
 	return s
 }
 
@@ -57,11 +134,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "proxy authentication required", http.StatusProxyAuthRequired)
 		return
 	}
-	if r.Method == http.MethodConnect {
-		s.handleConnect(w, r)
+	if err := s.validateRequestTarget(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	s.handleHTTP(w, r)
+	s.proxy.ServeHTTP(w, r)
 }
 
 func (s *Server) authorized(r *http.Request) bool {
@@ -92,84 +169,87 @@ func proxyBasicAuth(r *http.Request) (username, password string, ok bool) {
 	return username, password, found
 }
 
-func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Server) validateRequestTarget(r *http.Request) error {
+	if r.Method == http.MethodConnect {
+		target, err := normalizeTarget(r.Host, "443")
+		if err != nil {
+			return err
+		}
+		r.Host = target
+		r.URL.Host = target
+		return s.validateTarget(target)
+	}
 	if r.URL.IsAbs() == false {
-		http.Error(w, "proxy requests require an absolute URL", http.StatusBadRequest)
-		return
+		return fmt.Errorf("proxy requests require an absolute URL")
 	}
 	target, err := normalizeTarget(r.URL.Host, "80")
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return err
 	}
 	r.URL.Host = target
-	if err := s.validateTarget(target); err != nil {
-		http.Error(w, err.Error(), http.StatusForbidden)
-		return
-	}
-	r.RequestURI = ""
-	r.Header.Del("Proxy-Authorization")
-	r.Header.Del("Proxy-Connection")
-	resp, err := s.transport.RoundTrip(r)
-	if err != nil {
-		s.logger.Warn("proxy request failed", "target", r.URL.Host, "error", err)
-		http.Error(w, "upstream request failed", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	for key, values := range resp.Header {
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
-}
-
-func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
-	if err := s.validateTarget(r.Host); err != nil {
-		http.Error(w, err.Error(), http.StatusForbidden)
-		return
-	}
-	dialCtx, cancel := context.WithTimeout(r.Context(), s.cfg.Timeouts.Connect)
-	defer cancel()
-	upstream, err := s.dialContext(dialCtx, "tcp", r.Host)
-	if err != nil {
-		s.logger.Warn("connect failed", "target", r.Host, "error", err)
-		http.Error(w, "upstream connection failed", http.StatusBadGateway)
-		return
-	}
-	defer upstream.Close()
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
-		http.Error(w, "hijacking is unsupported", http.StatusInternalServerError)
-		return
-	}
-	client, rw, err := hijacker.Hijack()
-	if err != nil {
-		http.Error(w, "hijacking failed", http.StatusInternalServerError)
-		return
-	}
-	defer client.Close()
-	if _, err := rw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
-		return
-	}
-	if err := rw.Flush(); err != nil {
-		return
-	}
-	if rw.Reader.Buffered() > 0 {
-		_, _ = io.CopyN(upstream, rw, int64(rw.Reader.Buffered()))
-	}
-	join := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(upstream, client); _ = closeWrite(upstream); join <- struct{}{} }()
-	go func() { _, _ = io.Copy(client, upstream); _ = closeWrite(client); join <- struct{}{} }()
-	<-join
+	return s.validateTarget(target)
 }
 
 func (s *Server) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	source := s.pool.Next()
-	dialer := &net.Dialer{Timeout: s.cfg.Timeouts.Connect, KeepAlive: 30 * time.Second, LocalAddr: &net.TCPAddr{IP: source}}
-	return dialer.DialContext(ctx, network, address)
+	var lastErr error
+	excluded := make(map[string]struct{})
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		source := s.nextSource(excluded)
+		excluded[source.String()] = struct{}{}
+		dialer := &net.Dialer{Timeout: s.cfg.Timeouts.Connect, KeepAlive: 30 * time.Second, LocalAddr: &net.TCPAddr{IP: source}}
+		conn, err := dialer.DialContext(ctx, network, address)
+		if err == nil {
+			s.markSourceSuccess(source)
+			return &activityConn{Conn: conn, idle: s.cfg.Timeouts.Idle}, nil
+		}
+		s.markSourceFailure(source)
+		lastErr = fmt.Errorf("source %s: %w", source, err)
+		s.logger.Warn("source dial failed", "source", source, "target", address, "attempt", attempt+1, "error", err)
+	}
+	return nil, lastErr
+}
+
+func (s *Server) nextSource(excluded map[string]struct{}) net.IP {
+	var fallback net.IP
+	for i := 0; i < 8; i++ {
+		source := s.pool.Next()
+		if fallback == nil {
+			fallback = source
+		}
+		key := source.String()
+		if _, ok := excluded[key]; ok {
+			continue
+		}
+		s.sourceMu.Lock()
+		status := s.sources[key]
+		healthy := status.unhealthyUntil.Before(time.Now())
+		s.sourceMu.Unlock()
+		if healthy {
+			return source
+		}
+	}
+	return fallback
+}
+
+func (s *Server) markSourceSuccess(source net.IP) {
+	s.sourceMu.Lock()
+	delete(s.sources, source.String())
+	s.sourceMu.Unlock()
+}
+
+func (s *Server) markSourceFailure(source net.IP) {
+	key := source.String()
+	s.sourceMu.Lock()
+	status := s.sources[key]
+	status.failures++
+	if status.failures >= 2 {
+		status.unhealthyUntil = time.Now().Add(30 * time.Second)
+	}
+	s.sources[key] = status
+	s.sourceMu.Unlock()
 }
 
 func (s *Server) validateTarget(hostport string) error {
@@ -227,13 +307,6 @@ func isPrivateOrLocal(ip net.IP) bool {
 		return true
 	}
 	return false
-}
-
-func closeWrite(conn net.Conn) error {
-	if tcp, ok := conn.(*net.TCPConn); ok {
-		return tcp.CloseWrite()
-	}
-	return nil
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter) {
