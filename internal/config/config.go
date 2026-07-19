@@ -11,6 +11,7 @@ import (
 
 type Config struct {
 	Listen       string   `toml:"listen"`
+	AuthEnabled  *bool    `toml:"auth_enabled"`
 	Username     string   `toml:"username"`
 	Password     string   `toml:"password"`
 	SourceIPs    []string `toml:"source_ips"`
@@ -78,6 +79,13 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.Rotation != "random" && cfg.Rotation != "round_robin" {
 		return Config{}, errors.New("rotation must be random or round_robin")
+	}
+	if cfg.AuthEnabled == nil {
+		authEnabled := true
+		cfg.AuthEnabled = &authEnabled
+	}
+	if *cfg.AuthEnabled && (cfg.Username == "" || cfg.Password == "") {
+		return Config{}, errors.New("username and password are required")
 	}
 	if len(cfg.SourceIPs) == 0 && len(cfg.SourceCIDRs) == 0 {
 		return Config{}, errors.New("at least one source_ips or source_cidrs entry is required")

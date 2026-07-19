@@ -39,3 +39,35 @@ request = "5s"
 		t.Fatal("private destination blocking should default to true")
 	}
 }
+
+func TestLoadRequiresCredentials(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	contents := `source_ips = ["2001:db8::1"]
+username = "user"
+`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected missing password to be rejected")
+	}
+}
+
+func TestLoadAllowsDisabledAuthentication(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	contents := `auth_enabled = false
+source_ips = ["2001:db8::1"]
+`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AuthEnabled == nil || *cfg.AuthEnabled {
+		t.Fatal("authentication should be disabled")
+	}
+}

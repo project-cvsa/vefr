@@ -1,7 +1,0 @@
-listen = "127.0.0.1:8080"
-username = "replace-me"
-password = "replace-me"
-source_ips = ["2001:db8::10"]
-rotation = "round_robin"
-allow_ports = [80, 443]
-block_private = true

@@ -64,6 +64,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authorized(r *http.Request) bool {
+	if s.cfg.AuthEnabled != nil && !*s.cfg.AuthEnabled {
+		return true
+	}
 	if s.cfg.Username == "" && s.cfg.Password == "" {
 		return false
 	}
