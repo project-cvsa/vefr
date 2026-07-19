@@ -53,6 +53,10 @@ tar -xzf "$ARCHIVE" -C "$TMPDIR"
 $SUDO install -d -m 0755 "$PREFIX"
 $SUDO install -m 0755 "$TMPDIR/vefr" "$PREFIX/vefr"
 $SUDO "$PREFIX/vefr" systemd install --config "$CONFIG"
-if [[ ! -e "$CONFIG" ]]; then $SUDO install -m 0640 -o root -g vefr "$TMPDIR/config.example.toml" "$CONFIG"; fi
+if $SUDO test -e "$CONFIG" || $SUDO test -L "$CONFIG"; then
+  info "Preserving existing configuration at $CONFIG"
+else
+  $SUDO install -m 0640 -o root -g vefr "$TMPDIR/config.example.toml" "$CONFIG"
+fi
 success "vefr $VERSION was installed to $PREFIX/vefr"
 info "Review $CONFIG, then run: sudo systemctl enable --now vefr"
